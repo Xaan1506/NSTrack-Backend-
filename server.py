@@ -1052,3 +1052,9 @@ logger = logging.getLogger(__name__)
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
+from fastapi import FastAPI
+app = FastAPI()
+@app.get("/")
+def root():
+    return {"status": "ok"}
+
