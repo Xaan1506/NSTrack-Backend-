@@ -36,3 +36,12 @@ async def generate_token():
 
 if __name__ == "__main__":
     asyncio.run(generate_token())
+import jwt
+from jwt import ExpiredSignatureError, InvalidTokenError
+
+try:
+    payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+except ExpiredSignatureError:
+    # send 401 and message
+except InvalidTokenError:
+    # send 401

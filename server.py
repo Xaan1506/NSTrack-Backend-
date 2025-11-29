@@ -1053,8 +1053,19 @@ logger = logging.getLogger(__name__)
 async def shutdown_db_client():
     client.close()
 from fastapi import FastAPI
+from starlette.middleware.cors import CORSMiddleware
+
 app = FastAPI()
-@app.get("/")
-def root():
-    return {"status": "ok"}
+
+origins = [
+    "http://localhost:3000",
+    "https://your-frontend-domain.example",
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,           
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
