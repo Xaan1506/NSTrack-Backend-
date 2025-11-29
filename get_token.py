@@ -28,3 +28,4 @@ async def debug_db():
 
 if __name__ == "__main__":
     asyncio.run(debug_db())
+ACCESS_TOKEN_EXPIRE_MINUTES=30
