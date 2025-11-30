@@ -19,17 +19,30 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+env_path = ROOT_DIR / '.env'
+if env_path.exists():
+    load_dotenv(env_path)
 
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
+# Basic logging
+logging.basicConfig(level=logging.INFO)
+
+# MongoDB connection (fail fast with clear message if a required env var is missing)
+mongo_url = os.environ.get('MONGO_URL')
+if not mongo_url:
+    logging.error('MONGO_URL environment variable not set. Set it in the environment or .env file.')
+    raise RuntimeError('MONGO_URL not set')
+
+db_name = os.environ.get('DB_NAME', 'nstrack')
 client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+db = client[db_name]
 
 # Security
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
 JWT_SECRET = os.environ.get('JWT_SECRET')
+if not JWT_SECRET:
+    logging.error('JWT_SECRET environment variable not set. Set a strong secret in the environment.')
+    raise RuntimeError('JWT_SECRET not set')
 ALGORITHM = "HS256"
 
 # Create the main app without a prefix

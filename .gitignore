@@ -1,2 +1,16 @@
+# Ignore environment files
+.env
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+
+# Virtual envs
+venv/
+env/
+
+# Editor files
+.vscode/
+.idea/
 node_modules/
 .env

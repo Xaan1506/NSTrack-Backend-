@@ -4,14 +4,15 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 from pathlib import Path
 
-# Load env vars
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+env_path = ROOT_DIR / '.env'
+if env_path.exists():
+    load_dotenv(env_path)
 
 async def debug_db():
     mongo_url = os.environ.get('MONGO_URL')
     if not mongo_url:
-        print("MONGO_URL not found")
+        print("MONGO_URL not found. Set it in the environment or .env file.")
         return
 
     client = AsyncIOMotorClient(mongo_url)
@@ -28,4 +29,5 @@ async def debug_db():
 
 if __name__ == "__main__":
     asyncio.run(debug_db())
-ACCESS_TOKEN_EXPIRE_MINUTES=30
+
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get('ACCESS_TOKEN_EXPIRE_MINUTES', '30'))
