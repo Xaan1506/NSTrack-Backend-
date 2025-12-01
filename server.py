@@ -3,7 +3,7 @@ import os
 import asyncio
 from typing import Optional
 from datetime import datetime, timedelta
-
+from bson import ObjectId
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
@@ -67,14 +67,28 @@ async def get_user_by_email(email: str):
     return await db.users.find_one({"email": email})
 
 async def get_user_by_id(user_id: str):
-    return await db.users.find_one({"_id": user_id})
+    # try ObjectId first
+    try:
+        return await db.users.find_one({"_id": ObjectId(user_id)})
+    except Exception:
+        # fallback to string id lookup
+        return await db.users.find_one({"_id": user_id})
 
 # Pydantic models (allow camelCase from frontend)
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
+class ProfileOut(BaseModel):
+    name: str
+    email: EmailStr
+    skill_level: Optional[str] = Field(None, alias="skillLevel")
+    batch: Optional[str] = None
+    gender: Optional[str] = None
 
+    class Config:
+        orm_mode = True
+        allow_population_by_field_name = True
 class AuthResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -94,18 +108,6 @@ class UserSignup(BaseModel):
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
-
-class ProfileOut(BaseModel):
-    name: str
-    email: EmailStr
-    skill_level: Optional[str] = Field(None, alias="skillLevel")
-    batch: Optional[str] = None
-    gender: Optional[str] = None
-
-    class Config:
-        orm_mode = True
-        allow_population_by_field_name = True
-
 # auth utils
 async def get_current_user(token: str = Depends(oauth2_scheme)):
     credentials_exception = HTTPException(
@@ -120,14 +122,35 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
             raise credentials_exception
     except JWTError:
         raise credentials_exception
-    user = await db.users.find_one({"_id": user_id})
+
+    # Resolve user by trying common ID formats
+    user = None
+    # try ObjectId
+    try:
+        user = await db.users.find_one({"_id": ObjectId(user_id)})
+    except Exception:
+        user = None
+
+    # fallback attempts
+    if not user:
+        # string _id
+        user = await db.users.find_one({"_id": user_id})
+    if not user:
+        # custom id field
+        user = await db.users.find_one({"id": user_id})
+    if not user:
+        # maybe token contained email
+        user = await db.users.find_one({"email": user_id})
+
     if not user:
         raise credentials_exception
     return user
 
 # include routers (these files will import app/db/pwd_context via from server import db, create_access_token, ...)
+
 # to avoid circular import we'll import them late
 from routes import auth, friends, notifications, profile, progress  # type: ignore
+
 
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(friends.router, prefix="/api/friends", tags=["Friends"])
