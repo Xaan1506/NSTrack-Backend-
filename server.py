@@ -1,189 +1,141 @@
-from dotenv import load_dotenv
-load_dotenv()
+# server.py
 import os
-import logging
+import asyncio
 from typing import Optional
 from datetime import datetime, timedelta
 
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, status
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, EmailStr
-from jose import jwt, JWTError
+from fastapi.security import OAuth2PasswordBearer
 from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel, EmailStr, Field
 from passlib.context import CryptContext
+from jose import JWTError, jwt
+from dotenv import load_dotenv
 
-# ---------------------------
-# Load ENV variables
-# ---------------------------
+# load .env
+load_dotenv()
+
 MONGO_URL = os.getenv("MONGO_URL")
 DB_NAME = os.getenv("DB_NAME", "nstrack")
-JWT_SECRET = os.getenv("JWT_SECRET")
+JWT_SECRET = os.getenv("JWT_SECRET", "change_this")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
 if not MONGO_URL:
-    raise RuntimeError("MONGO_URL not set")
-if not JWT_SECRET:
-    raise RuntimeError("JWT_SECRET not set")
+    raise RuntimeError("MONGO_URL not set in .env")
 
-# ---------------------------
-# Logging
-# ---------------------------
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# DB client
+client = AsyncIOMotorClient(MONGO_URL)
+db = client[DB_NAME]
 
-# ---------------------------
-# FastAPI App + Router
-# ---------------------------
-app = FastAPI()
-api = APIRouter(prefix="/api")
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
-# ---------------------------
-# CORS
-# ---------------------------
-origins = [
-    "http://localhost:3000",
-    "https://nstrack-frontend.onrender.com",
-]
+app = FastAPI(title="NSTrack Backend (FastAPI)")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # for dev; restrict in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ---------------------------
-# MongoDB
-# ---------------------------
-client = AsyncIOMotorClient(MONGO_URL)
-db = client[DB_NAME]
-users_collection = db["users"]
-notifications_collection = db["notifications"]
+# helpers
+def hash_password(password: str) -> str:
+    # bcrypt / passlib handles up to 72 bytes; truncate safely if needed
+    if isinstance(password, str):
+        pw = password
+    else:
+        pw = str(password)
+    if len(pw.encode("utf-8")) > 72:
+        pw = pw.encode("utf-8")[:72].decode("utf-8", errors="ignore")
+    return pwd_context.hash(pw)
 
-# ---------------------------
-# Security & Password Hashing
-# ---------------------------
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-def hash_password(password):
-    return pwd_context.hash(password)
-
-def verify_password(plain, hashed):
+def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
-# ---------------------------
-# JWT Helpers
-# ---------------------------
-def create_access_token(data: dict, expires_minutes=60):
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=expires_minutes)
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, JWT_SECRET, algorithm=ALGORITHM)
+    encoded = jwt.encode(to_encode, JWT_SECRET, algorithm=ALGORITHM)
+    return encoded
 
-# ---------------------------
-# Pydantic Models
-# ---------------------------
+async def get_user_by_email(email: str):
+    return await db.users.find_one({"email": email})
+
+async def get_user_by_id(user_id: str):
+    return await db.users.find_one({"_id": user_id})
+
+# Pydantic models (allow camelCase from frontend)
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class AuthResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: ProfileOut
+
 class UserSignup(BaseModel):
     name: str
     email: EmailStr
     password: str
-    skill_level: str
+    skill_level: Optional[str] = Field(None, alias="skillLevel")
     batch: Optional[str] = None
     gender: Optional[str] = None
+
+    class Config:
+        allow_population_by_field_name = True
 
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
+class ProfileOut(BaseModel):
+    name: str
+    email: EmailStr
+    skill_level: Optional[str] = Field(None, alias="skillLevel")
+    batch: Optional[str] = None
+    gender: Optional[str] = None
 
-# ------------------------------------------------------------
-# ROUTES UNDER /api/auth
-# ------------------------------------------------------------
+    class Config:
+        orm_mode = True
+        allow_population_by_field_name = True
 
-@api.post("/auth/signup")
-async def signup(user: UserSignup):
-    # Check existing user
-    existing = await users_collection.find_one({"email": user.email})
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
+# auth utils
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[ALGORITHM])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    user = await db.users.find_one({"_id": user_id})
+    if not user:
+        raise credentials_exception
+    return user
 
-    hashed_pw = hash_password(user.password)
+# include routers (these files will import app/db/pwd_context via from server import db, create_access_token, ...)
+# to avoid circular import we'll import them late
+from routes import auth, friends, notifications, profile, progress  # type: ignore
 
-    user_data = {
-        "name": user.name,
-        "email": user.email,
-        "password": hashed_pw,
-        "skill_level": user.skill_level,
-        "batch": user.batch,
-        "gender": user.gender,
-        "points": 10,
-        "created_at": datetime.utcnow(),
-    }
-
-    await users_collection.insert_one(user_data)
-
-    token = create_access_token({"email": user.email})
-
-    return {
-        "message": "Signup success",
-        "access_token": token,
-        "user": {
-            "name": user.name,
-            "email": user.email,
-            "points": 10,
-        }
-    }
-
-
-@api.post("/auth/login")
-async def login(user: UserLogin):
-    found = await users_collection.find_one({"email": user.email})
-    if not found:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    if not verify_password(user.password, found["password"]):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    token = create_access_token({"email": user.email})
-
-    return {
-        "message": "Login successful",
-        "access_token": token,
-        "user": {
-            "name": found["name"],
-            "email": found["email"],
-            "points": found.get("points", 0)
-        }
-    }
+app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
+app.include_router(friends.router, prefix="/api/friends", tags=["Friends"])
+app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
+app.include_router(profile.router, prefix="/api", tags=["Profile"])
+app.include_router(progress.router, prefix="/api/progress", tags=["Progress"])
 
 
-# ------------------------------------------------------------
-# NOTIFICATIONS ROUTES
-# ------------------------------------------------------------
-@api.get("/notifications/unread")
-async def get_unread_notifications():
-    notifications = await notifications_collection.find({"read": False}).to_list(100)
-    return notifications
-
-
-# ------------------------------------------------------------
-# HEALTH CHECK
-# ------------------------------------------------------------
-@api.get("/health")
-async def health():
-    return {"status": "ok"}
-
-
-# ------------------------------------------------------------
-# Include Router
-# ------------------------------------------------------------
-app.include_router(api)
-
-# ------------------------------------------------------------
-# Shutdown Hook
-# ------------------------------------------------------------
 @app.on_event("shutdown")
-def shutdown():
+def shutdown_db_client():
     client.close()
-    logger.info("MongoDB client closed.")
