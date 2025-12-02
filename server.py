@@ -36,7 +36,7 @@ app = FastAPI(title="NSTrack Backend (FastAPI)")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # for dev; restrict in production
+    allow_origins=["https://nstrack-frontend.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
