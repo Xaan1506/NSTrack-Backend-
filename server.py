@@ -36,11 +36,15 @@ app = FastAPI(title="NSTrack Backend (FastAPI)")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://nstrack-frontend.vercel.app"],
-    allow_credentials=True,
+    allow_origins=[
+        "https://nstrack-frontend.vercel.app",
+        "http://localhost:3000"
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=True,
 )
+
 
 # helpers
 def hash_password(password: str) -> str:
@@ -152,13 +156,18 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
 from routes import auth, friends, notifications, profile, progress  # type: ignore
 
 
-app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
-app.include_router(friends.router, prefix="/api/friends", tags=["Friends"])
-app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
-app.include_router(profile.router, prefix="/api", tags=["Profile"])
-app.include_router(progress.router, prefix="/api/progress", tags=["Progress"])
+app.include_router(auth.router, prefix="/api/auth")
+app.include_router(profile.router, prefix="/api")
+app.include_router(friends.router, prefix="/api/friends")
+app.include_router(progress.router, prefix="/api/progress")
+app.include_router(notifications.router, prefix="/api/notifications")
+
+
 
 
 @app.on_event("shutdown")
 def shutdown_db_client():
     client.close()
+@app.get("/api/health")
+async def health():
+    return {"status": "ok"}
